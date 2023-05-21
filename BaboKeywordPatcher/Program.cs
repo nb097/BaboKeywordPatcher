@@ -6,6 +6,8 @@ using Mutagen.Bethesda.Synthesis;
 using Mutagen.Bethesda.Skyrim;
 using System.Threading.Tasks;
 using System.Text.RegularExpressions;
+using DynamicData;
+using Mutagen.Bethesda.Plugins;
 
 namespace BaboKeywordPatcher
 {
@@ -93,8 +95,6 @@ namespace BaboKeywordPatcher
         public static IKeywordGetter? SLA_MiniSkirt;
         public static IKeywordGetter? SLA_ArmorHalfNakedBikini;
 
-        public static IKeywordGetter? SOS_Revealing;
-
         public static void LoadKeywords(IPatcherState<ISkyrimMod, ISkyrimModGetter> state)
         {
             SLA_ArmorHarness = LoadKeyword(state, "SLA_ArmorHarness");
@@ -133,17 +133,14 @@ namespace BaboKeywordPatcher
             SLA_HasStockings = LoadKeyword(state, "SLA_HasStockings");
             SLA_MiniSkirt = LoadKeyword(state, "SLA_MiniSkirt");
             SLA_ArmorHalfNakedBikini = LoadKeyword(state, "SLA_ArmorHalfNakedBikini");
-
-            SOS_Revealing = LoadKeyword(state, "SOS_Revealing");
         }
 
         private static void AddTag(Armor armorEditObj, IKeywordGetter tag)
         {
-            System.Console.WriteLine("Added keyword " + tag.ToString() + " to armor " + armorEditObj.Name);
+          Console.WriteLine("Adding keyword " + tag.ToString() + " to armor " + armorEditObj.Name);
             if (armorEditObj.Keywords == null)
             {
-                System.Console.WriteLine("AOE.Keywords == null: " + armorEditObj);
-                // AEO.Keywords!.Add(tag);
+                Console.WriteLine("armorEditObj.Keywords == null: " + armorEditObj);
             }
             else if (!armorEditObj.Keywords.Contains(tag))
             {
@@ -151,18 +148,62 @@ namespace BaboKeywordPatcher
             }
         }
 
-        private static bool HasTag(Armor armorEditObj, IKeywordGetter tag)
+        private static bool HasTag(IPatcherState<ISkyrimMod, ISkyrimModGetter> state, Armor armorEditObj, string tag)
         {
-            // System.Console.WriteLine("Checking for keyword " + tag.ToString() + " on armor " + armorEditObj.Name);
+            // Console.WriteLine("Checking for keyword " + tag + " on armor " + armorEditObj.Name);
             if (armorEditObj.Keywords == null)
             {
-                // System.Console.WriteLine("AOE.Keywords == null: " + armorEditObj);
+                // Console.WriteLine("armorEditObj.Keywords == null: " + armorEditObj);
             }
-            else if (armorEditObj.Keywords.Contains(tag))
+            else
             {
-                return true;
+                foreach (var kywd in armorEditObj.Keywords)
+                {
+                    kywd.TryResolve(state.LinkCache, out var kywdFormKey);
+                    if (kywdFormKey == null)
+                    {
+                        Console.WriteLine("Failed to get keyword for: " + kywd);
+                        return false;
+                    }
+                    if (kywdFormKey.EditorID != null && kywdFormKey.EditorID.ToUpper().Equals(tag.ToUpper()))
+                    {
+                        // Console.WriteLine(armorEditObj.Name + " has keyword " + tag);
+                        return true;
+                    }
+                }
             }
+            // Console.WriteLine(armorEditObj.Name + " does not have keyword " + tag);
             return false;
+        }
+
+        private static void RemoveTag(IPatcherState<ISkyrimMod, ISkyrimModGetter> state, Armor armorEditObj, string tag)
+        {
+            Console.WriteLine("Removing keyword " + tag.ToString() + " on armor " + armorEditObj.Name);
+            if (armorEditObj.Keywords == null)
+            {
+                Console.WriteLine("armorEditObj.Keywords == null: " + armorEditObj);
+            }
+            else
+            {
+                // Have to bend over backwards here to create new form keys based on the found keywords (because loss of scope?) and can't remove while iterating
+                FormKey kywdForm = new FormKey();
+                foreach (var kywd in armorEditObj.Keywords)
+                {
+                    kywd.TryResolve(state.LinkCache, out var kywdFormKey);
+                    if (kywdFormKey == null)
+                    {
+                        Console.WriteLine("Failed to get keyword for: " + kywd);
+                        return;
+                    }
+                    if (kywdFormKey.EditorID != null && kywdFormKey.EditorID.ToUpper().Equals(tag.ToUpper()))
+                    {
+                        // Console.WriteLine("Keyword found: " + kywdFormKey.EditorID + "; modkey: " + kywdFormKey.FormKey.ModKey + ", ID: " + kywdFormKey.FormKey.ID);
+                        kywdForm = new FormKey(new ModKey(kywdFormKey.FormKey.ModKey.Name, kywdFormKey.FormKey.ModKey.Type), kywdFormKey.FormKey.ID);
+                    }
+                }
+                // Console.WriteLine("Removing keyword " + tag.ToString() + " (" + kywdForm.ModKey + ":" + kywdForm.ID + ") on armor " + armorEditObj.Name);
+                armorEditObj.Keywords!.Remove(kywdForm);
+            }
         }
 
         // Keywords are static / nullabe, but are initialized on runtime. Ignore warning.
@@ -175,7 +216,7 @@ namespace BaboKeywordPatcher
 
             if (armorEditObj == null)
             {
-                System.Console.WriteLine("Armor is null for " + name);
+                Console.WriteLine("Armor is null for " + name);
                 return;
             }
             // SLA_ArmorBondage
@@ -354,14 +395,15 @@ namespace BaboKeywordPatcher
                 AddTag(armorEditObj, EroticArmor);
             }
             // If set, remove SLA_ArmorHalfNakedBikini on armors tagged SOS_Revealing
-            if (Settings.Value.NoBikiniForBra && HasTag(armorEditObj, SOS_Revealing) && HasTag(armorEditObj, SLA_ArmorHalfNakedBikini))
+            // Had to switch to strings because mods like having their own copy of SOS_Revealing (to avoid more masters) which is a problem for this purpose
+            if (Settings.Value.NoBikiniForBra && HasTag(state, armorEditObj, "SOS_Revealing") && HasTag(state, armorEditObj, "SLA_ArmorHalfNakedBikini"))
             {
-                System.Console.WriteLine("Removed keyword " + SLA_ArmorHalfNakedBikini.ToString() + " from armor " + armorEditObj.Name);
-                armorEditObj.Keywords.Remove(SLA_ArmorHalfNakedBikini);
+                matched = true;
+                RemoveTag(state, armorEditObj, "SLA_ArmorHalfNakedBikini");
             }
             if (matched)
             {
-                // System.Console.WriteLine("Matched: " + name);
+                // Console.WriteLine("Matched: " + name);
                 state.PatchMod.Armors.Set(armorEditObj);
             }
         }
@@ -415,10 +457,10 @@ namespace BaboKeywordPatcher
                 // MoreNastyCritters breaks the patching process. Ignore it.
                 catch (Exception e)
                 {
-                    System.Console.WriteLine("Caught exception: " + e);
+                    Console.WriteLine("Caught exception: " + e);
                 }
             }
-            System.Console.WriteLine("Done.");
+            Console.WriteLine("Done.");
         }
     }
 }
